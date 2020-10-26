@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "veebot",
+    "veebot-cmd",
+]
+
+[profile.dev.package.backtrace]
+opt-level = 3
