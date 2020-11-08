@@ -1,6 +1,6 @@
 //! Assorted utility functions (missing batteries).
 
-use std::time;
+use std::{fmt, str::FromStr, time};
 
 use serde::de::DeserializeOwned;
 use serenity::async_trait;
@@ -42,9 +42,12 @@ impl ReqwestClientExt for reqwest::Client {
         url: Url,
         query: &[(&str, &str)],
     ) -> crate::Result<T> {
+        dbg!(&url, query);
+
         let res = self
             .get(url)
             .query(query)
+            // Important for derpibooru (otherwise it responds with an html capcha page)
             .header("User-Agent", "Veebot")
             .send()
             .await
@@ -60,7 +63,6 @@ impl ReqwestClientExt for reqwest::Client {
 
             return Err(crate::err!(GetRequest { status, body }));
         }
-
         res.json()
             .await
             .map_err(|err| crate::err!(UnexpectedJsonShape(err)))
@@ -73,4 +75,32 @@ pub(crate) fn create_http_client() -> reqwest::Client {
         .connect_timeout(time::Duration::from_secs(30))
         .build()
         .expect("rustls backend initialization should never error out")
+}
+
+// A string without commas
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub(crate) struct ThemeTag(String);
+
+impl ThemeTag {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ThemeTag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl FromStr for ThemeTag {
+    type Err = crate::Error;
+
+    fn from_str(s: &str) -> Result<ThemeTag, Self::Err> {
+        let input = s.to_owned();
+        if s.contains(',') {
+            return Err(crate::err!(CommaInImageTag { input }));
+        }
+        Ok(ThemeTag(input))
+    }
 }

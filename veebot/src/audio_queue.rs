@@ -1,6 +1,9 @@
 //! Audio tracks queue implementation
 
-use crate::yt::YtVideo;
+use crate::{
+    derpibooru::{rpc::Image, DerpibooruService},
+    yt::YtVideo,
+};
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
@@ -26,10 +29,11 @@ use serenity::{
 use std::{
     collections::hash_map::Entry, collections::HashMap, collections::VecDeque, fmt, sync::Arc, time,
 };
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Inherently atomic
 pub(crate) struct AudioService {
+    derpibooru: Arc<DerpibooruService>,
     voice_mgr: Arc<Mutex<ClientVoiceManager>>,
     cache_and_http: Arc<CacheAndHttp>,
     queues: RwLock<HashMap<GuildId, mpsc::UnboundedSender<AudioQueueCmd>>>,
@@ -39,11 +43,13 @@ impl AudioService {
     pub(crate) fn new(
         voice_mgr: Arc<Mutex<ClientVoiceManager>>,
         cache_and_http: Arc<CacheAndHttp>,
+        derpibooru: Arc<DerpibooruService>,
     ) -> Self {
         AudioService {
             voice_mgr,
             cache_and_http,
             queues: Default::default(),
+            derpibooru,
         }
     }
 
@@ -61,6 +67,7 @@ impl AudioService {
                     guild_id,
                     Arc::clone(&self.voice_mgr),
                     &self.cache_and_http,
+                    Arc::clone(&self.derpibooru),
                 ))
                 .clone(),
         }
@@ -85,6 +92,7 @@ struct AudioTrackQueue {
     guild_id: GuildId,
     cache: Arc<Cache>,
     http: Arc<Http>,
+    derpibooru: Arc<DerpibooruService>,
 }
 
 pub(crate) enum AudioQueueCmd {
@@ -141,54 +149,63 @@ impl AudioTrackQueue {
     pub(crate) fn run(
         guild_id: GuildId,
         voice_mgr: Arc<Mutex<ClientVoiceManager>>,
-        CacheAndHttp { cache, http, .. }: &CacheAndHttp,
+        cah: &CacheAndHttp,
+        derpibooru: Arc<DerpibooruService>,
     ) -> mpsc::UnboundedSender<AudioQueueCmd> {
-        let (cmd_send, mut cmd_recv) = mpsc::unbounded::<AudioQueueCmd>();
-        let cache = Arc::clone(cache);
-        let http = Arc::clone(http);
+        let (cmd_send, cmd_recv) = mpsc::unbounded();
+        let cache = Arc::clone(&cah.cache);
+        let http = Arc::clone(&cah.http);
         tokio::spawn(async move {
-            let mut me = Self {
+            Self {
+                derpibooru,
                 orders: VecDeque::new(),
                 active_track: None,
                 voice_mgr,
                 guild_id,
                 cache,
                 http,
-            };
-            loop {
-                let cmd = match &mut me.active_track {
-                    Some(ActiveAudioTrack { finish_recv, .. }) => futures::select! {
-                        it = finish_recv.fuse() => {
-                            if let Ok(()) = it {
-                                let _ = me.show_track_finished(&me.active_track.as_ref().unwrap().order).await;
-                                me.play_next_track().await;
-                            } else {
-                                debug!("Track canceled");
-                            }
-                            continue;
-                        },
-                        it = cmd_recv.next() => it,
-                    },
-                    None => cmd_recv.next().await,
-                };
-
-                let cmd = match cmd {
-                    Some(it) => it,
-                    None => {
-                        info!("Audio queue task sender returned `None`, shutting down the event loop...");
-                        return;
-                    }
-                };
-
-                let source_msg_channel_id = cmd.source_msg().channel_id;
-                if let Err(err) = me.event_loop_turn(cmd).await {
-                    let _ = me
-                        .send_message(source_msg_channel_id, |it| err.create_msg(it))
-                        .await;
-                }
             }
+            .run_event_loop(cmd_recv)
+            .await;
         });
         cmd_send
+    }
+
+    async fn run_event_loop(&mut self, mut cmd_recv: mpsc::UnboundedReceiver<AudioQueueCmd>) {
+        loop {
+            let cmd = match &mut self.active_track {
+                None => cmd_recv.next().await,
+                Some(ActiveAudioTrack { finish_recv, .. }) => futures::select! {
+                    it = cmd_recv.next() => it,
+                    it = finish_recv.fuse() => {
+                        if let Ok(()) = it {
+                            let _ = self.show_track_finished(&self.active_track.as_ref().unwrap().order).await;
+                            self.play_next_track().await;
+                        } else {
+                            debug!("Track canceled");
+                        }
+                        continue;
+                    },
+                },
+            };
+
+            let cmd = match cmd {
+                Some(it) => it,
+                None => {
+                    info!(
+                        "Audio queue task sender returned `None`, shutting down the event loop..."
+                    );
+                    return;
+                }
+            };
+
+            let source_msg_channel_id = cmd.source_msg().channel_id;
+            if let Err(err) = self.process_command(cmd).await {
+                let _ = self
+                    .send_message(source_msg_channel_id, |it| err.create_msg(it))
+                    .await;
+            }
+        }
     }
 
     fn available_track_index_range(&self) -> Option<std::ops::Range<usize>> {
@@ -258,11 +275,49 @@ impl AudioTrackQueue {
         Ok(())
     }
 
-    async fn event_loop_turn(&mut self, cmd: AudioQueueCmd) -> crate::Result<()> {
+    fn try_add_random_queue_humnail(
+        embed: &mut CreateEmbed,
+        image: crate::Result<Option<Image>>,
+    ) -> &mut CreateEmbed {
+        match image {
+            Ok(Some(image)) => {
+                embed.thumbnail(image.representations.thumb);
+            }
+            err => warn!(
+                ?err,
+                "Could not get a random pony image for show queue command"
+            ),
+        }
+        embed
+    }
+
+    async fn fetch_random_queue_thumbnail(&self) -> crate::Result<Option<Image>> {
+        let tags = ["solo", "face"];
+        self.derpibooru
+            .fetch_random_media(tags.iter().map(|it| it.parse().unwrap()))
+            .await
+    }
+
+    async fn process_command(&mut self, cmd: AudioQueueCmd) -> crate::Result<()> {
         match cmd {
             AudioQueueCmd::PlayTrack(order) => {
+                if self.active_track.is_some() {
+                    let footer = format!(
+                        "ordered by {}, time until playing: {}",
+                        order.ordered_by.author.name,
+                        Self::format_duration(&self.time_until_playing(self.orders.len()).await),
+                    );
+                    self.send_embed(order.ordered_by.channel_id, |it| {
+                        it.title(format_args!("Track pending `#{}`", self.orders.len() + 1))
+                            .description(Self::full_yt_video_link(&order.meta))
+                            .footer(|it| it.text(footer).icon_url(order.ordered_by.author.face()))
+                            .thumbnail(&order.meta.thumbnail_url())
+                    })
+                    .await?;
+                }
+
                 self.orders.push_back(order);
-                while self.active_track.is_none() {
+                if self.active_track.is_none() {
                     self.play_next_track().await;
                 }
             }
@@ -299,11 +354,15 @@ impl AudioTrackQueue {
             AudioQueueCmd::ShowQueue {
                 source: Message { channel_id, .. },
             } => {
+                let image = self.fetch_random_queue_thumbnail().await;
                 let track = match &self.active_track {
                     Some(it) => it,
                     None => {
-                        self.send_embed(channel_id, |it| it.description("Audio queue is empty"))
-                            .await?;
+                        self.send_embed(channel_id, |it| {
+                            it.description("Audio queue is empty");
+                            Self::try_add_random_queue_humnail(it, image)
+                        })
+                        .await?;
                         return Ok(());
                     }
                 };
@@ -332,21 +391,18 @@ impl AudioTrackQueue {
                     ));
                 }
 
-                let queue_duration: time::Duration =
-                    self.orders.iter().map(|it| it.meta.duration()).sum();
-                let active_left = track.order.meta.duration() - track.source.lock().await.position;
-
-                let total_duration = active_left + queue_duration;
+                let total_duration = self.time_until_playing(self.orders.len()).await;
 
                 self.send_embed(channel_id, |it| {
-                    it
-                    .title("Sweetie Bot radio station")
-                    .description(msg).footer(|it| {
-                        it.text(format_args!(
-                            "Total time left to play: {}",
-                            Self::format_duration(&total_duration)
-                        ))
-                    })
+                    it.title("Sweetie Bot radio station")
+                        .description(msg)
+                        .footer(|it| {
+                            it.text(format_args!(
+                                "Total time left to play: {}",
+                                Self::format_duration(&total_duration)
+                            ))
+                        });
+                    Self::try_add_random_queue_humnail(it, image)
                 })
                 .await?;
             }
@@ -413,6 +469,20 @@ impl AudioTrackQueue {
         }
 
         Ok(())
+    }
+
+    async fn time_until_playing(&self, order_index: usize) -> time::Duration {
+        let queue_duration: time::Duration = self
+            .orders
+            .iter()
+            .map(|it| it.meta.duration())
+            .take(order_index)
+            .sum();
+
+        let track = self.active_track.as_ref().unwrap();
+        let active_left = track.order.meta.duration() - track.source.lock().await.position;
+
+        active_left + queue_duration
     }
 
     fn active_track_or_err(&self) -> crate::Result<&ActiveAudioTrack> {
@@ -483,6 +553,20 @@ impl AudioTrackQueue {
         Ok(())
     }
 
+    fn full_yt_video_link(yt_vid: &YtVideo) -> MessageBuilder {
+        let mut msg = MessageBuilder::new();
+        msg.push("[")
+            .push_bold_safe(yt_vid.channel_title())
+            .push("](")
+            .push_safe(yt_vid.channel_url())
+            .push(") - [")
+            .push_bold_safe(format_args!("\"{}\"", yt_vid.title()))
+            .push("](")
+            .push_safe(yt_vid.url())
+            .push(")");
+        msg
+    }
+
     async fn show_now_playing_track(&self, track: &ActiveAudioTrack) -> crate::Result<()> {
         let meta = &track.order.meta;
         let order_msg = &track.order.ordered_by;
@@ -496,18 +580,7 @@ impl AudioTrackQueue {
         );
         self.send_embed(order_msg.channel_id, |it| {
             it.title("Now playing")
-                .description(
-                    MessageBuilder::new()
-                        .push("[")
-                        .push_bold_safe(meta.channel_title())
-                        .push("](")
-                        .push_safe(meta.channel_url())
-                        .push(") - [")
-                        .push_bold_safe(format_args!("\"{}\"", meta.title()))
-                        .push("](")
-                        .push_safe(meta.url())
-                        .push(")"),
-                )
+                .description(Self::full_yt_video_link(meta))
                 .thumbnail(&meta.thumbnail_url())
                 .footer(|it| it.text(footer_text).icon_url(order_msg.author.face()))
         })
@@ -565,6 +638,7 @@ impl AudioSource for SubscribableAudioSource {
 
     async fn read_pcm_frame(&mut self, buffer: &mut [i16]) -> Option<usize> {
         let n_read = self.inner.read_pcm_frame(buffer).await;
+        // debug!(?n_read);
         if let Some(0) = n_read {
             self.send_finished_event_or_panic();
         }

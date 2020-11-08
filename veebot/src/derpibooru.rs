@@ -1,14 +1,14 @@
-//! Symbols related to communicating with the YouTube API
+//! Symbols related to communicating with the Derpibooru API
 
-use crate::util::{self, ReqwestClientExt};
+use crate::util::{self, ReqwestClientExt, ThemeTag};
 use itertools::Itertools;
-use std::{collections::HashSet, fmt, str::FromStr};
+use std::collections::HashSet;
 use url::Url;
 
 /// Declarations of the derpibooru JSON API types.
 /// Use TypeScript declarations as a reference (though they may go out of date):
 /// https://github.com/octet-stream/dinky/blob/master/lib/Dinky.d.ts
-mod rpc {
+pub(crate) mod rpc {
     use serde::Deserialize;
 
     pub(crate) mod search {
@@ -22,18 +22,19 @@ mod rpc {
 
     #[derive(Debug, Deserialize)]
     pub(crate) struct Image {
-        pub(crate) id: f64,
+        pub(crate) id: u128,
         pub(crate) mime_type: ImageMimeType,
         pub(crate) representations: ImageRepresentations,
         pub(crate) tags: Vec<String>,
         pub(crate) created_at: chrono::NaiveDateTime,
-        /// The image's f64 of upvotes minus the image's f64 of downvotes.
-        pub(crate) score: f64,
+        /// The image's number of upvotes minus the image's number of downvotes.
+        pub(crate) score: u64,
     }
 
     #[derive(Debug, Deserialize)]
     pub(crate) struct ImageRepresentations {
         pub(crate) full: String,
+        pub(crate) thumb: String,
     }
 
     #[derive(Debug, Deserialize)]
@@ -72,39 +73,18 @@ impl rpc::ImageMimeType {
     }
 }
 
-#[derive(Debug, Hash, Eq, PartialEq)]
-pub(crate) struct Tag(String);
-
-impl fmt::Display for Tag {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl FromStr for Tag {
-    type Err = crate::Error;
-
-    fn from_str(s: &str) -> Result<Tag, Self::Err> {
-        let input = s.to_owned();
-        if s.contains(',') {
-            return Err(crate::err!(CommaInImageTag { input }));
-        }
-        Ok(Tag(input))
-    }
-}
-
 pub(crate) struct DerpibooruService {
     http_client: reqwest::Client,
     derpibooru_api_key: String,
     filter_id: String,
-    always_on_tags: HashSet<Tag>,
+    always_on_tags: HashSet<ThemeTag>,
 }
 
 impl DerpibooruService {
     pub(crate) fn new(
         derpibooru_api_key: String,
         filter_id: String,
-        always_on_tags: HashSet<Tag>,
+        always_on_tags: HashSet<ThemeTag>,
     ) -> Self {
         Self {
             http_client: util::create_http_client(),
@@ -115,13 +95,13 @@ impl DerpibooruService {
     }
 
     /// Fetches random pony media (image or video) based on the given tags (if there are any).
-    pub(crate) async fn fetch_random_pony_media<'a>(
-        &'a self,
-        tags: impl IntoIterator<Item = &'a Tag>,
+    pub(crate) async fn fetch_random_media(
+        &self,
+        tags: impl IntoIterator<Item = ThemeTag>,
     ) -> crate::Result<Option<rpc::Image>> {
         let tags_with_always_on_ones = tags
             .into_iter()
-            .chain(self.always_on_tags.iter())
+            .chain(self.always_on_tags.iter().cloned())
             .collect::<HashSet<_>>()
             .iter()
             .join(",");

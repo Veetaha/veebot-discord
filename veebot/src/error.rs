@@ -141,7 +141,7 @@ pub enum ErrorKind {
         body: String,
     },
 
-    #[error("YouTube has returned an unexpected response JSON obejct")]
+    #[error("Received an unexpected response JSON obejct")]
     UnexpectedJsonShape(reqwest::Error),
 
     #[error("Failed to find youtube video for \"{0}\" query.)")]

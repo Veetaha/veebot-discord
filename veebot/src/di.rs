@@ -32,8 +32,9 @@ macro_rules! def_type_map_keys {
 def_type_map_keys! {
     ClientVoiceManagerToken => Arc<Mutex<ClientVoiceManager>>,
     YtServiceToken => Arc<crate::yt::YtService>,
-    DerpibooruServiceToken => Arc<crate::derpibooru::DerpibooruService>,
     AudioServiceToken => Arc<crate::audio_queue::AudioService>,
+    DerpibooruServiceToken => Arc<crate::derpibooru::DerpibooruService>,
+    GelbooruServiceToken => Arc<crate::gelbooru::GelbooruService>,
 }
 
 /// Utility trait to reduce boilerplate for retrieving and acquiring locks
