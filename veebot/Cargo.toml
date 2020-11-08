@@ -7,7 +7,7 @@ publish = false
 autobins = true
 
 [dependencies.serenity]
-version = "0.9.0-rc.2"
+version = "0.9.1"
 features = [
     "cache",
     "framework",
@@ -20,12 +20,12 @@ features = [
 chrono = { version = "0.4.19", features = ["serde", "std"] }
 hhmmss = "0.1.0"
 iso8601 = "0.4.0"
-color-eyre = "0.5.6"
-backtrace = "0.3.53"
+simple-eyre = "0.3.0"
+backtrace = "0.3.54"
 nanoid = "0.3.0"
 dotenv = "0.15.0"
 envy = "0.4.1"
-eyre = "0.6.1"
+eyre = "0.6.2"
 futures = "0.3.7"
 itertools = "0.9.0"
 once_cell = "1.4"

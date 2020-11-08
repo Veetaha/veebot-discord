@@ -4,6 +4,7 @@ use std::{fmt, str::FromStr, time};
 
 use serde::de::DeserializeOwned;
 use serenity::async_trait;
+use tracing::debug;
 use url::Url;
 
 /// Shortcut for defining a lazily-compiled regular expression
@@ -42,7 +43,7 @@ impl ReqwestClientExt for reqwest::Client {
         url: Url,
         query: &[(&str, &str)],
     ) -> crate::Result<T> {
-        dbg!(&url, query);
+        debug!(?url, ?query, "sending http GET request");
 
         let res = self
             .get(url)
