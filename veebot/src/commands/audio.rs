@@ -1,23 +1,23 @@
 use crate::{
-    audio_queue::AudioTrack,
+    audio_queue::{AudioQueueCmd, AudioTrackOrder},
     di::{self, DiExt},
 };
-use core::fmt;
-use hhmmss::Hhmmss;
+use futures::channel::mpsc;
 use serenity::{
     client::Context, framework::standard::macros::group, framework::standard::Args,
-    model::channel::Message, model::user::User, voice,
+    model::channel::Message,
 };
 use veebot_cmd::veebot_cmd;
 
 #[group]
-#[commands(play)]
+#[commands(play, skip, now_playing, queue, pause, resume, clear)]
 pub(crate) struct Audio;
 
-fn _join_user_voice_channel(_user: User) {}
-
 #[veebot_cmd]
+#[aliases("p")]
 async fn play(ctx: &Context, msg: &Message, mut args: Args) -> crate::Result<()> {
+    let task_send = get_or_create_audio_track_queue(ctx, msg).await?;
+
     let yt_vid = {
         let yt = ctx.data.expect_dep::<di::YtServiceToken>().await;
         match args.single::<url::Url>() {
@@ -26,80 +26,115 @@ async fn play(ctx: &Context, msg: &Message, mut args: Args) -> crate::Result<()>
         }
     };
 
-    let guild = msg
-        .guild(&ctx)
-        .await
-        .ok_or_else(|| crate::err!(UserNotInGuild))?;
-
-    let channel_id = guild
-        .voice_states
-        .get(&msg.author.id)
-        .and_then(|it| it.channel_id)
-        .ok_or_else(|| crate::err!(UserNotInVoiceChanel))?;
-
-    let mut voice_mgr = ctx.data.lock_dep::<di::ClientVoiceManagerToken>().await;
-
-    let handler = match voice_mgr.join(guild.id, channel_id) {
-        Some(it) => it,
-        None => return Err(crate::err!(JoinVoiceChannel(channel_id.name(ctx).await)))?,
-    };
-
-    let source = voice::ytdl(yt_vid.url().as_str())
-        .await
-        .map_err(|err| crate::err!(AudioStart(err)))?;
-
-    let source = handler.play_only(source);
-
-    let track = AudioTrack {
+    let order = AudioTrackOrder {
         meta: yt_vid,
-        source,
-        ordered_by: msg.author.clone(),
+        ordered_by: msg.clone(),
     };
 
-    let footer_text = active_track_footer_text(&track).await;
+    task_send
+        .unbounded_send(AudioQueueCmd::PlayTrack(order))
+        .unwrap();
+    Ok(())
+}
 
-    msg.channel_id
-        .send_message(ctx, |it| {
-            it.embed(|it| {
-                it.description(format_args!(
-                    "Now playing:\n[**{}**]({}) - [**\"{}\"**]({})",
-                    track.meta.channel_title(),
-                    track.meta.channel_url(),
-                    track.meta.title(),
-                    track.meta.url(),
-                ))
-                .thumbnail(&track.meta.thumbnail_url())
-                .footer(|it| it.text(footer_text).icon_url(track.ordered_by.face()))
-            })
+#[veebot_cmd]
+#[aliases("s", "fs")]
+async fn skip(ctx: &Context, msg: &Message, mut args: Args) -> crate::Result<()> {
+    let task_send = get_or_create_audio_track_queue(ctx, msg).await?;
+
+    let index: usize = if args.is_empty() {
+        0
+    } else {
+        args.single().map_err(|err| crate::err!(ParseInt(err)))?
+    };
+
+    task_send
+        .unbounded_send(AudioQueueCmd::SkipTrack {
+            source: msg.clone(),
+            index,
         })
-        .await?;
+        .unwrap();
 
     Ok(())
 }
 
-/// Creates discord embed footer text part for the currently playing track.
-async fn active_track_footer_text(track: &AudioTrack) -> String {
-    let played_duration = format_duration(&track.source.lock().await.position);
-    let total_track_duration = format_duration(&track.meta.duration());
-    format!(
-        "ordered by {} ({} / {})",
-        // FIXME: use `.nick_in(guild_id)`
-        track.ordered_by.name,
-        played_duration,
-        total_track_duration,
-    )
+#[veebot_cmd]
+#[aliases("np")]
+async fn now_playing(ctx: &Context, msg: &Message) -> crate::Result<()> {
+    let task_send = get_or_create_audio_track_queue(ctx, msg).await?;
+
+    task_send
+        .unbounded_send(AudioQueueCmd::ShowNowPlaying {
+            source: msg.clone(),
+        })
+        .unwrap();
+
+    Ok(())
 }
 
-/// Returns duration in a colon separated string format.
-fn format_duration(duration: &impl Hhmmss) -> impl fmt::Display {
-    // Unfortunately chrono doesn't have anything useful for formatting durations
-    // FIXME: use chrono means of fomratting durations once this is added to the lib:
-    // https://github.com/chronotope/chrono/issues/197#issuecomment-716257398
-    let rendered = duration.hhmmss();
+#[veebot_cmd]
+#[aliases("q")]
+async fn queue(ctx: &Context, msg: &Message) -> crate::Result<()> {
+    let task_send = get_or_create_audio_track_queue(ctx, msg).await?;
 
-    // Remove unnecessary leading zeros for hours (most of the tracks are within the minutes timespan)
-    match rendered.strip_prefix("00:") {
-        Some(it) => it.to_owned(),
-        None => rendered,
-    }
+    task_send
+        .unbounded_send(AudioQueueCmd::ShowQueue {
+            source: msg.clone(),
+        })
+        .unwrap();
+
+    Ok(())
+}
+
+#[veebot_cmd]
+async fn pause(ctx: &Context, msg: &Message) -> crate::Result<()> {
+    let task_send = get_or_create_audio_track_queue(ctx, msg).await?;
+
+    task_send
+        .unbounded_send(AudioQueueCmd::Pause {
+            source: msg.clone(),
+        })
+        .unwrap();
+
+    Ok(())
+}
+
+#[veebot_cmd]
+async fn resume(ctx: &Context, msg: &Message) -> crate::Result<()> {
+    let task_send = get_or_create_audio_track_queue(ctx, msg).await?;
+
+    task_send
+        .unbounded_send(AudioQueueCmd::Resume {
+            source: msg.clone(),
+        })
+        .unwrap();
+
+    Ok(())
+}
+
+#[veebot_cmd]
+#[aliases("c")]
+async fn clear(ctx: &Context, msg: &Message) -> crate::Result<()> {
+    let task_send = get_or_create_audio_track_queue(ctx, msg).await?;
+
+    task_send
+        .unbounded_send(AudioQueueCmd::Clear {
+            source: msg.clone(),
+        })
+        .unwrap();
+
+    Ok(())
+}
+
+async fn get_or_create_audio_track_queue(
+    ctx: &Context,
+    msg: &Message,
+) -> crate::Result<mpsc::UnboundedSender<AudioQueueCmd>> {
+    let guild_id = msg.guild_id.ok_or_else(|| crate::err!(UserNotInGuild))?;
+    Ok(ctx
+        .data
+        .expect_dep::<di::AudioServiceToken>()
+        .await
+        .get_or_create_queue(guild_id)
+        .await)
 }

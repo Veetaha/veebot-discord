@@ -1,3 +1,5 @@
+use std::num::ParseIntError;
+
 use serenity::{builder::CreateMessage, framework::standard::ArgError, utils::Color};
 use thiserror::Error;
 use url::Url;
@@ -35,7 +37,30 @@ impl<T: Into<ErrorKind>> From<T> for Error {
             backtrace: BacktracePolyfill::new(),
         };
 
-        tracing::error!(id = err.id.as_str(), ?err.backtrace, ?err.kind);
+        let is_user_error = match &err.kind {
+            ErrorKind::TrackIndexOutOfBounds { .. }
+            | ErrorKind::UserNotInGuild { .. }
+            | ErrorKind::ParseInt { .. }
+            | ErrorKind::ParseArg { .. }
+            | ErrorKind::CommaInImageTag { .. }
+            | ErrorKind::UserNotInVoiceChanel { .. }
+            | ErrorKind::NoActiveTrack { .. } => true,
+            ErrorKind::JoinVoiceChannel { .. }
+            | ErrorKind::AudioStart { .. }
+            | ErrorKind::UnknownDiscord { .. }
+            | ErrorKind::SendRequest { .. }
+            | ErrorKind::GetRequest { .. }
+            | ErrorKind::UnexpectedJsonShape { .. }
+            | ErrorKind::YtVidNotFound { .. }
+            | ErrorKind::YtInferVideoId { .. } => false,
+        };
+
+        // No need for a backtrace if the error is an expected one
+        if is_user_error {
+            tracing::error!(id = err.id.as_str(), ?err.kind);
+        } else {
+            tracing::error!(id = err.id.as_str(), ?err.kind, ?err.backtrace);
+        }
 
         err
     }
@@ -67,11 +92,30 @@ impl Error {
 
 #[derive(Error, Debug)]
 pub enum ErrorKind {
+    #[error(
+        "Given track index `{}` is out of bounds, available range: {:?}",
+        index,
+        available
+    )]
+    TrackIndexOutOfBounds {
+        index: usize,
+        available: Option<std::ops::Range<usize>>,
+    },
+
+    #[error("No track is currently playing")]
+    NoActiveTrack,
+
     #[error("You are not in a discord server (guild) right now")]
     UserNotInGuild,
 
-    #[error("Failed to parse url: {0}")]
-    UrlArgParse(#[from] ArgError<url::ParseError>),
+    #[error("Failed to parse an integer: {0}")]
+    ParseInt(#[from] ArgError<ParseIntError>),
+
+    #[error("Parsing the arguments finished with an error: {0}")]
+    ParseArg(#[from] ArgError<Box<Error>>),
+
+    #[error("The specified image tags contain a comma (which is prohibited): {input}")]
+    CommaInImageTag { input: String },
 
     #[error(
         "You are not in a voice channel. You need to connect to one first so that \
@@ -91,14 +135,14 @@ pub enum ErrorKind {
     #[error("Failed to send an http request")]
     SendRequest(reqwest::Error),
 
-    #[error("YouTube has returned an error (http status code: {status}) {err}")]
-    YtBadStatusCode {
+    #[error("GET request has failed (http status code: {status}):\n{body}")]
+    GetRequest {
         status: reqwest::StatusCode,
-        err: String,
+        body: String,
     },
 
     #[error("YouTube has returned an unexpected response JSON obejct")]
-    YtUnexpectedJsonShape(reqwest::Error),
+    UnexpectedJsonShape(reqwest::Error),
 
     #[error("Failed to find youtube video for \"{0}\" query.)")]
     YtVidNotFound(String),
@@ -111,15 +155,18 @@ impl ErrorKind {
     /// Short name of the kind of this error.
     fn title(&self) -> &'static str {
         match self {
+            ErrorKind::NoActiveTrack => "Invalid command error",
             ErrorKind::UserNotInGuild => "Not in a guild error",
-            ErrorKind::UrlArgParse(_) => "Invalid argument error",
+            ErrorKind::ParseArg(_)
+            | ErrorKind::ParseInt(_)
+            | ErrorKind::CommaInImageTag { .. }
+            | ErrorKind::TrackIndexOutOfBounds { .. } => "Invalid argument error",
             ErrorKind::UserNotInVoiceChanel => "Not in a voice channel error",
             ErrorKind::JoinVoiceChannel(_) => "Permissions error",
             ErrorKind::AudioStart(_) | ErrorKind::UnknownDiscord(_) => "Internal error",
-            ErrorKind::SendRequest(_) => "Send request erorr",
-            ErrorKind::YtBadStatusCode { .. }
-            | ErrorKind::YtUnexpectedJsonShape(_)
-            | ErrorKind::YtVidNotFound(_) => "YouTube error",
+            ErrorKind::SendRequest(_) => "Send request error",
+            ErrorKind::GetRequest { .. } | ErrorKind::UnexpectedJsonShape(_) => "HTTP error",
+            ErrorKind::YtVidNotFound(_) => "YouTube error",
             ErrorKind::YtInferVideoId { .. } => "Bad YouTube URL",
         }
     }

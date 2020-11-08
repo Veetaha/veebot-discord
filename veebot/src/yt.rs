@@ -1,9 +1,8 @@
 //! Symbols related to communicating with the YouTube API
 
-use serde::de::DeserializeOwned;
 use std::time;
 use url::Url;
-use util::regex;
+use util::{regex, ReqwestClientExt};
 
 use crate::util;
 
@@ -17,7 +16,6 @@ mod rpc {
     use url::Url;
 
     pub(crate) mod search {
-        use super::VideoId;
         use serde::Deserialize;
 
         #[derive(Deserialize)]
@@ -26,10 +24,16 @@ mod rpc {
             pub(crate) items: Vec<Item>,
         }
 
-        #[derive(Debug, Deserialize)]
+        #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         pub(crate) struct Item {
             pub(crate) id: VideoId,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        pub(crate) struct VideoId {
+            pub(crate) video_id: String,
         }
     }
 
@@ -43,7 +47,7 @@ mod rpc {
             pub(crate) items: Vec<Item>,
         }
 
-        #[derive(Debug, Deserialize)]
+        #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         pub(crate) struct Item {
             pub(crate) id: String,
@@ -52,13 +56,7 @@ mod rpc {
         }
     }
 
-    #[derive(Debug, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub(crate) struct VideoId {
-        pub(crate) video_id: String,
-    }
-
-    #[derive(Debug, Deserialize)]
+    #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub(crate) struct VideoSnippet {
         pub(crate) channel_id: String,
@@ -69,44 +67,34 @@ mod rpc {
         // "description": string,
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub(crate) struct VideoThumbnails {
         pub(crate) default: VideoThumbnail,
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub(crate) struct VideoThumbnail {
         pub(crate) url: Url,
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub(crate) struct ContentDetails {
         pub(crate) duration: String,
     }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub(crate) struct Error {
-        pub(crate) error: CoreError,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub(crate) struct CoreError {
-        pub(crate) code: u64,
-        pub(crate) message: String,
-    }
 }
+
+util::def_url_base!(yt_api, "https://www.googleapis.com/youtube/v3");
+util::def_url_base!(yt, "https://www.youtube.com");
 
 pub(crate) struct YtVideo(rpc::videos::Item);
 
 impl YtVideo {
     pub(crate) fn url(&self) -> Url {
-        let mut url: Url = "https://www.youtube.com/watch".parse().unwrap();
-        url.set_query(Some(&format!("v={}", self.0.id)));
+        let mut url = yt(&["watch"]);
+        url.query_pairs_mut().append_pair("v", &self.0.id);
         url
     }
 
@@ -149,12 +137,7 @@ impl YtVideo {
     }
 
     pub(crate) fn channel_url(&self) -> Url {
-        format!(
-            "https://www.youtube.com/channel/{}",
-            self.0.snippet.channel_id
-        )
-        .parse()
-        .unwrap()
+        yt(&["channel", &self.0.snippet.channel_id])
     }
 }
 
@@ -167,50 +150,16 @@ impl YtService {
     pub(crate) fn new(yt_data_api_key: String) -> Self {
         Self {
             yt_data_api_key,
-            http_client: reqwest::Client::builder()
-                .timeout(time::Duration::from_secs(30))
-                .connect_timeout(time::Duration::from_secs(30))
-                .build()
-                .expect("rustls backend initialization should never error out"),
+            http_client: util::create_http_client(),
         }
-    }
-
-    async fn send_get_request<T: DeserializeOwned>(
-        &self,
-        url: &str,
-        query: &[(&str, &str)],
-    ) -> crate::Result<T> {
-        let res = self
-            .http_client
-            .get(url)
-            .query(query)
-            .send()
-            .await
-            .map_err(|err| crate::err!(SendRequest(err)))?;
-
-        let status = res.status();
-
-        if status.is_client_error() || status.is_server_error() {
-            let err = match res.json().await {
-                Ok(rpc::Error {
-                    error: rpc::CoreError { code, message },
-                }) => format!("(yt api error code: {}): {}", code, message),
-                Err(err) => format!("YouTube returned an error (urecognized shape): {}", err),
-            };
-
-            return Err(crate::err!(YtBadStatusCode { status, err }));
-        }
-
-        res.json()
-            .await
-            .map_err(|err| crate::err!(YtUnexpectedJsonShape(err)))
     }
 
     /// https://developers.google.com/youtube/v3/docs/videos/list
     async fn find_video_by_id(&self, id: &str) -> crate::Result<Option<YtVideo>> {
         let res: rpc::videos::Response = self
-            .send_get_request(
-                "https://www.googleapis.com/youtube/v3/videos",
+            .http_client
+            .send_get_json_request(
+                yt_api(&["videos"]),
                 &[
                     ("part", "snippet,contentDetails"),
                     ("id", id),
@@ -235,8 +184,9 @@ impl YtService {
     pub(crate) async fn find_video_by_query(&self, query: &str) -> crate::Result<YtVideo> {
         // First perform a search with the given human query string
         let res: rpc::search::Response = self
-            .send_get_request(
-                "https://www.googleapis.com/youtube/v3/search",
+            .http_client
+            .send_get_json_request(
+                yt_api(&["search"]),
                 &[
                     ("maxResults", "1"),
                     ("type", "video"),

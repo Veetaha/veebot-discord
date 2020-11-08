@@ -14,20 +14,35 @@ pub fn veebot_cmd(attr: TokenStream, item: TokenStream) -> TokenStream {
         "veebot cmd must be used as a bare attribute without any arguments"
     );
 
-    let fn_item = syn::parse_macro_input!(item as syn::ItemFn);
+    let mut fn_item = syn::parse_macro_input!(item as syn::ItemFn);
     let vis = &fn_item.vis;
     let cmd_name = &fn_item.sig.ident;
+    let (fn_args, fn_arg_idents): (Vec<_>, Vec<_>) = fn_item
+        .sig
+        .inputs
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(i, mut fn_arg)| {
+            let pat_type = match &mut fn_arg {
+                syn::FnArg::Receiver(_) => unreachable!(),
+                syn::FnArg::Typed(it) => it,
+            };
+            let ident = quote::format_ident!("arg_{}", i);
+            *pat_type.pat = syn::parse_quote!(#ident);
+            (fn_arg, ident)
+        })
+        .unzip();
+
+    let attrs = std::mem::take(&mut fn_item.attrs);
 
     let result = quote! {
         #[::serenity::framework::standard::macros::command]
-        #vis async fn #cmd_name(
-            ctx: &::serenity::client::Context,
-            msg: &::serenity::model::channel::Message,
-            args: ::serenity::framework::standard::Args,
-        ) -> ::serenity::framework::standard::CommandResult {
-            if let Err(err) = #cmd_name(ctx, msg, args).await {
-                msg.channel_id
-                    .send_message(ctx, |it| err.create_msg(it))
+        #(#attrs)*
+        #vis async fn #cmd_name(#(#fn_args),*) -> ::serenity::framework::standard::CommandResult {
+            if let Err(err) = #cmd_name(#(#fn_arg_idents),*).await {
+                arg_1.channel_id
+                    .send_message(arg_0, |it| err.create_msg(it))
                     .await
                     .unwrap();
             }
