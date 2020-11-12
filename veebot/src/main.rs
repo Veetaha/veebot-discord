@@ -1,5 +1,5 @@
-use std::env;
 use eyre::{Result, WrapErr as _};
+use std::env;
 
 #[tokio::main]
 async fn main() -> Result<()> {

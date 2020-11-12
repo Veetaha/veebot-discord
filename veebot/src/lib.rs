@@ -7,7 +7,7 @@ pub(crate) mod gelbooru;
 pub(crate) mod util;
 pub(crate) mod yt;
 
-pub(crate) use crate::error::{err, Error, Result, ErrorKind};
+pub(crate) use crate::error::{err, Error, ErrorKind, Result};
 use audio_queue::AudioService;
 use futures::FutureExt;
 use serde::Deserialize;

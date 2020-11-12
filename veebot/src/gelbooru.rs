@@ -34,13 +34,11 @@ util::def_url_base!(gelbooru, "https://gelbooru.com/index.php");
 impl rpc::Image {
     pub(crate) fn webpage_url(&self) -> Url {
         let mut url = gelbooru(iter::empty::<&str>());
-        url
-            .query_pairs_mut()
-            .extend_pairs(&[
-                ("page", "post"),
-                ("s", "view"),
-                ("id", &self.id.to_string())
-            ]);
+        url.query_pairs_mut().extend_pairs(&[
+            ("page", "post"),
+            ("s", "view"),
+            ("id", &self.id.to_string()),
+        ]);
         url
     }
 }
@@ -52,10 +50,7 @@ pub(crate) struct GelbooruService {
 }
 
 impl GelbooruService {
-    pub(crate) fn new(
-        gelbooru_api_key: String,
-        gelbooru_user_id: String,
-    ) -> Self {
+    pub(crate) fn new(gelbooru_api_key: String, gelbooru_user_id: String) -> Self {
         Self {
             http_client: util::create_http_client(),
             gelbooru_api_key,
@@ -73,9 +68,7 @@ impl GelbooruService {
             tags.insert("sort:random".parse().unwrap());
         }
 
-        let tags = tags
-            .iter()
-            .join(" ");
+        let tags = tags.iter().join(" ");
 
         let query = vec![
             ("page", "dapi"),
@@ -96,7 +89,10 @@ impl GelbooruService {
         match res {
             Ok(it) => Ok(it.0.into_iter().next()),
             // When no image was found, the response has empty body...
-            Err(crate::Error { kind: crate::ErrorKind::UnexpectedJsonShape(_) , .. }) => Ok(None),
+            Err(crate::Error {
+                kind: crate::ErrorKind::UnexpectedJsonShape(_),
+                ..
+            }) => Ok(None),
             Err(it) => Err(it),
         }
     }

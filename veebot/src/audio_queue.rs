@@ -138,12 +138,17 @@ impl AudioTrackQueue {
     }
 
     async fn out_channel(&self) -> ChannelId {
-        self.guild_id
-            .to_guild_cached(&self.cache)
-            .await
-            .unwrap()
-            .system_channel_id
-            .unwrap_or_else(|| todo!())
+        let guild = self.guild_id.to_guild_cached(&self.cache).await.unwrap();
+        match guild.system_channel_id {
+            Some(it) => it,
+            None => {
+                guild
+                    .default_channel_guaranteed()
+                    .await
+                    .unwrap_or_else(|| todo!())
+                    .id
+            }
+        }
     }
 
     pub(crate) fn run(
