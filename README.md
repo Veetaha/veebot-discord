@@ -14,12 +14,12 @@ As for now, you have to build the bot from sources.
 
 For this you need to have [Rust toolchain installed][rust-toolchain].
 
+There are also some other dependencies to be installed that are specified in
+`Dockerfile`, just take a look there.
+
 Then run this to build the binaries:
 
 ```bash
-# This will be refactored to a Dockerfile, but for now you have to run this once:
-./install-deps.sh
-
 # Compile the program itself
 cargo build --release
 
