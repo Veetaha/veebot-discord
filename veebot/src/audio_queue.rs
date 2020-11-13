@@ -11,19 +11,17 @@ use futures::{
 use hhmmss::Hhmmss;
 use serenity::{
     async_trait,
-    builder::CreateEmbed,
-    builder::CreateMessage,
+    builder::{CreateEmbed, CreateMessage},
     client::{bridge::voice::ClientVoiceManager, Cache},
     http::Http,
+    model::prelude::CurrentUser,
     model::{
-        channel::Message,
+        channel::{ChannelType, Message},
         id::{ChannelId, GuildId},
     },
-    prelude::Mutex,
-    prelude::RwLock,
+    prelude::{Mutex, RwLock},
     utils::MessageBuilder,
-    voice::AudioSource,
-    voice::{self, Audio},
+    voice::{self, Audio, AudioSource},
     CacheAndHttp,
 };
 use std::{
@@ -37,6 +35,7 @@ pub(crate) struct AudioService {
     voice_mgr: Arc<Mutex<ClientVoiceManager>>,
     cache_and_http: Arc<CacheAndHttp>,
     queues: RwLock<HashMap<GuildId, mpsc::UnboundedSender<AudioQueueCmd>>>,
+    bot_user: Arc<CurrentUser>,
 }
 
 impl AudioService {
@@ -44,12 +43,14 @@ impl AudioService {
         voice_mgr: Arc<Mutex<ClientVoiceManager>>,
         cache_and_http: Arc<CacheAndHttp>,
         derpibooru: Arc<DerpibooruService>,
+        bot_user: Arc<CurrentUser>,
     ) -> Self {
         AudioService {
             voice_mgr,
             cache_and_http,
             queues: Default::default(),
             derpibooru,
+            bot_user,
         }
     }
 
@@ -68,6 +69,7 @@ impl AudioService {
                     Arc::clone(&self.voice_mgr),
                     &self.cache_and_http,
                     Arc::clone(&self.derpibooru),
+                    Arc::clone(&self.bot_user),
                 ))
                 .clone(),
         }
@@ -93,6 +95,7 @@ struct AudioTrackQueue {
     cache: Arc<Cache>,
     http: Arc<Http>,
     derpibooru: Arc<DerpibooruService>,
+    bot_user: Arc<CurrentUser>,
 }
 
 pub(crate) enum AudioQueueCmd {
@@ -141,13 +144,17 @@ impl AudioTrackQueue {
         let guild = self.guild_id.to_guild_cached(&self.cache).await.unwrap();
         match guild.system_channel_id {
             Some(it) => it,
-            None => {
-                guild
-                    .default_channel_guaranteed()
-                    .await
-                    .unwrap_or_else(|| todo!())
-                    .id
-            }
+            None => *guild
+                .channels
+                .iter()
+                .find(|(&id, it)| {
+                    it.kind == ChannelType::Text
+                        && guild
+                            .user_permissions_in(id, self.bot_user.id)
+                            .send_messages()
+                })
+                .map(|(id, _)| id)
+                .unwrap_or_else(|| todo!()),
         }
     }
 
@@ -156,6 +163,7 @@ impl AudioTrackQueue {
         voice_mgr: Arc<Mutex<ClientVoiceManager>>,
         cah: &CacheAndHttp,
         derpibooru: Arc<DerpibooruService>,
+        bot_user: Arc<CurrentUser>,
     ) -> mpsc::UnboundedSender<AudioQueueCmd> {
         let (cmd_send, cmd_recv) = mpsc::unbounded();
         let cache = Arc::clone(&cah.cache);
@@ -165,6 +173,7 @@ impl AudioTrackQueue {
                 derpibooru,
                 orders: VecDeque::new(),
                 active_track: None,
+                bot_user,
                 voice_mgr,
                 guild_id,
                 cache,
@@ -643,7 +652,7 @@ impl AudioSource for SubscribableAudioSource {
 
     async fn read_pcm_frame(&mut self, buffer: &mut [i16]) -> Option<usize> {
         let n_read = self.inner.read_pcm_frame(buffer).await;
-        // debug!(?n_read);
+        debug!(?n_read);
         if let Some(0) = n_read {
             self.send_finished_event_or_panic();
         }

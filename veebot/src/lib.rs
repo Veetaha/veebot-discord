@@ -62,12 +62,14 @@ pub async fn run(config: Config) -> eyre::Result<()> {
         .group(&commands::audio::AUDIO_GROUP)
         .help(&HELP);
 
-    let mut client = Client::new(config.discord_bot_token)
+    let mut client = Client::builder(config.discord_bot_token)
         .framework(framework)
         .event_handler(Handler)
         // FIXME: configure proper intents
         // .add_intent(GatewayIntents::)
         .await?;
+
+    let bot_user = Arc::new(client.cache_and_http.http.get_current_user().await?);
 
     let derpibooru_service = Arc::new(derpibooru::DerpibooruService::new(
         config.derpibooru_api_key,
@@ -83,6 +85,7 @@ pub async fn run(config: Config) -> eyre::Result<()> {
         Arc::clone(&client.voice_manager),
         Arc::clone(&client.cache_and_http),
         Arc::clone(&derpibooru_service),
+        bot_user,
     ));
 
     // Inject the necessary dependencies
@@ -95,7 +98,7 @@ pub async fn run(config: Config) -> eyre::Result<()> {
         data.insert::<di::GelbooruServiceToken>(Arc::new(gelbooru::GelbooruService::new(
             config.gelbooru_api_key,
             config.gelbooru_user_id,
-        )))
+        )));
     }
 
     futures::select! {
