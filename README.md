@@ -17,7 +17,7 @@ For this you need to have [Rust toolchain installed][rust-toolchain].
 There are also some other dependencies to be installed that are specified in
 `Dockerfile`, just take a look there.
 
-Then run this to build the binaries:
+Then run this to build the bot binary:
 
 ```bash
 # Compile the program itself

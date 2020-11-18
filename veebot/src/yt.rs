@@ -1,6 +1,6 @@
 //! Symbols related to communicating with the YouTube API
 
-use std::time;
+use std::{fmt, time};
 use url::Url;
 use util::{regex, ReqwestClientExt};
 
@@ -38,7 +38,7 @@ mod rpc {
     }
 
     pub(crate) mod videos {
-        use super::{ContentDetails, VideoSnippet};
+        use super::{ContentDetails, LiveStreamingDetails, VideoSnippet};
         use serde::Deserialize;
 
         #[derive(Deserialize)]
@@ -53,6 +53,7 @@ mod rpc {
             pub(crate) id: String,
             pub(crate) snippet: VideoSnippet,
             pub(crate) content_details: ContentDetails,
+            pub(crate) live_streaming_details: Option<LiveStreamingDetails>,
         }
     }
 
@@ -84,6 +85,10 @@ mod rpc {
     pub(crate) struct ContentDetails {
         pub(crate) duration: String,
     }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub(crate) struct LiveStreamingDetails {}
 }
 
 util::def_url_base!(yt_api, "https://www.googleapis.com/youtube/v3");
@@ -92,10 +97,23 @@ util::def_url_base!(yt, "https://www.youtube.com");
 pub(crate) struct YtVideo(rpc::videos::Item);
 
 impl YtVideo {
+    pub(crate) fn is_livestream(&self) -> bool {
+        self.0.live_streaming_details.is_some()
+    }
+
     pub(crate) fn url(&self) -> Url {
         let mut url = yt(&["watch"]);
         url.query_pairs_mut().append_pair("v", &self.0.id);
         url
+    }
+
+    pub(crate) fn format_duration(&self) -> impl fmt::Display {
+        let duration = self.duration();
+        if self.is_livestream() && duration == time::Duration::new(0, 0) {
+            "livestream".to_owned()
+        } else {
+            crate::util::format_duration(&duration)
+        }
     }
 
     pub(crate) fn duration(&self) -> time::Duration {
@@ -161,7 +179,7 @@ impl YtService {
             .send_get_json_request(
                 yt_api(&["videos"]),
                 &[
-                    ("part", "snippet,contentDetails"),
+                    ("part", "snippet,contentDetails,liveStreamingDetails"),
                     ("id", id),
                     ("key", &self.yt_data_api_key),
                 ],

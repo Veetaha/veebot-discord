@@ -2,8 +2,12 @@
 
 use std::{fmt, str::FromStr, time};
 
+use hhmmss::Hhmmss;
 use serde::de::DeserializeOwned;
-use serenity::async_trait;
+use serenity::{
+    async_trait,
+    model::{guild::Guild, id::GuildId},
+};
 use tracing::debug;
 use url::Url;
 
@@ -26,6 +30,20 @@ macro_rules! _def_url_base {
 }
 
 pub(crate) use {_def_url_base as def_url_base, _regex as regex};
+
+#[async_trait]
+pub(crate) trait CacheExt {
+    async fn guild_or_err(&self, guild_id: GuildId) -> crate::Result<Guild>;
+}
+
+#[async_trait]
+impl CacheExt for serenity::client::Cache {
+    async fn guild_or_err(&self, guild_id: GuildId) -> crate::Result<Guild> {
+        self.guild(guild_id)
+            .await
+            .ok_or_else(|| crate::err!(DiscordGuildCacheMiss(guild_id)))
+    }
+}
 
 #[async_trait]
 pub(crate) trait ReqwestClientExt {
@@ -103,5 +121,19 @@ impl FromStr for ThemeTag {
             return Err(crate::err!(CommaInImageTag { input }));
         }
         Ok(ThemeTag(input))
+    }
+}
+
+/// Returns duration in a colon separated string format.
+pub(crate) fn format_duration(duration: &impl Hhmmss) -> String {
+    // Unfortunately chrono doesn't have anything useful for formatting durations
+    // FIXME: use chrono means of formatting durations once this is added to the lib:
+    // https://github.com/chronotope/chrono/issues/197#issuecomment-716257398
+    let rendered = duration.hhmmss();
+
+    // Remove unnecessary leading zeros for hours (most of the tracks are within the minutes timespan)
+    match rendered.strip_prefix("00:") {
+        Some(it) => it.to_owned(),
+        None => rendered,
     }
 }

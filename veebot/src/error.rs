@@ -1,6 +1,8 @@
 use std::num::ParseIntError;
 
-use serenity::{builder::CreateMessage, framework::standard::ArgError, utils::Color};
+use serenity::{
+    builder::CreateMessage, framework::standard::ArgError, model::id::GuildId, utils::Color,
+};
 use thiserror::Error;
 use url::Url;
 // We have to rename it because `thiserror` implements
@@ -52,7 +54,8 @@ impl<T: Into<ErrorKind>> From<T> for Error {
             | ErrorKind::GetRequest { .. }
             | ErrorKind::UnexpectedJsonShape { .. }
             | ErrorKind::YtVidNotFound { .. }
-            | ErrorKind::YtInferVideoId { .. } => false,
+            | ErrorKind::YtInferVideoId { .. }
+            | ErrorKind::DiscordGuildCacheMiss { .. } => false,
         };
 
         // No need for a backtrace if the error is an expected one
@@ -129,6 +132,9 @@ pub enum ErrorKind {
     #[error("Falied to start streaming the audio: {0}")]
     AudioStart(serenity::Error),
 
+    #[error("Failed to get information about the guild {0} from the cache")]
+    DiscordGuildCacheMiss(GuildId),
+
     #[error("Unknown discord error: {0}")]
     UnknownDiscord(#[from] serenity::Error),
 
@@ -144,7 +150,7 @@ pub enum ErrorKind {
     #[error("Received an unexpected response JSON obejct")]
     UnexpectedJsonShape(reqwest::Error),
 
-    #[error("Failed to find youtube video for \"{0}\" query.)")]
+    #[error("Failed to find youtube video for \"{0}\" query.")]
     YtVidNotFound(String),
 
     #[error("Could not infer YouTube video id from the url `{0}`")]
@@ -163,7 +169,9 @@ impl ErrorKind {
             | ErrorKind::TrackIndexOutOfBounds { .. } => "Invalid argument error",
             ErrorKind::UserNotInVoiceChanel => "Not in a voice channel error",
             ErrorKind::JoinVoiceChannel(_) => "Permissions error",
-            ErrorKind::AudioStart(_) | ErrorKind::UnknownDiscord(_) => "Internal error",
+            ErrorKind::AudioStart(_)
+            | ErrorKind::UnknownDiscord(_)
+            | ErrorKind::DiscordGuildCacheMiss(_) => "Internal error",
             ErrorKind::SendRequest(_) => "Send request error",
             ErrorKind::GetRequest { .. } | ErrorKind::UnexpectedJsonShape(_) => "HTTP error",
             ErrorKind::YtVidNotFound(_) => "YouTube error",

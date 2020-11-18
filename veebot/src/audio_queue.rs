@@ -2,13 +2,14 @@
 
 use crate::{
     derpibooru::{rpc::Image, DerpibooruService},
+    util::format_duration,
+    util::CacheExt,
     yt::YtVideo,
 };
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
 };
-use hhmmss::Hhmmss;
 use serenity::{
     async_trait,
     builder::{CreateEmbed, CreateMessage},
@@ -25,7 +26,7 @@ use serenity::{
     CacheAndHttp,
 };
 use std::{
-    collections::hash_map::Entry, collections::HashMap, collections::VecDeque, fmt, sync::Arc, time,
+    collections::hash_map::Entry, collections::HashMap, collections::VecDeque, sync::Arc, time,
 };
 use tracing::{debug, info, warn};
 
@@ -141,7 +142,7 @@ impl AudioTrackQueue {
     }
 
     async fn out_channel(&self) -> ChannelId {
-        let guild = self.guild_id.to_guild_cached(&self.cache).await.unwrap();
+        let guild = self.cache.guild_or_err(self.guild_id).await.unwrap();
         match guild.system_channel_id {
             Some(it) => it,
             None => *guild
@@ -254,15 +255,17 @@ impl AudioTrackQueue {
     }
 
     async fn show_track_finished(&self, order: &AudioTrackOrder) -> crate::Result<()> {
-        self.send_embed(self.out_channel().await, |it| {
-            it.description(
-                Self::build_track_status_msg(order)
-                    .push("has ")
-                    .push_bold("finished")
-                    .push(" (played for: ")
-                    .push_mono(Self::format_duration(&order.meta.duration()))
-                    .push(")"),
-            )
+        self.send_embed(order.ordered_by.channel_id, |it| {
+            let mut msg = Self::build_track_status_msg(order);
+            msg.push("has ").push_bold("finished");
+
+            if !order.meta.is_livestream() {
+                msg.push(" (played for: ")
+                    .push_mono(format_duration(&order.meta.duration()))
+                    .push(")");
+            }
+
+            it.description(msg)
         })
         .await
     }
@@ -319,7 +322,7 @@ impl AudioTrackQueue {
                     let footer = format!(
                         "ordered by {}, time until playing: {}",
                         order.ordered_by.author.name,
-                        Self::format_duration(&self.time_until_playing(self.orders.len()).await),
+                        format_duration(&self.time_until_playing(self.orders.len()).await),
                     );
                     self.send_embed(order.ordered_by.channel_id, |it| {
                         it.title(format_args!("Track pending `#{}`", self.orders.len() + 1))
@@ -386,8 +389,8 @@ impl AudioTrackQueue {
                 Self::push_track_link(&mut msg, &track.order);
                 msg.push_mono_safe(format_args!(
                     "({} / {}) ordered by {}",
-                    Self::format_duration(&track.source.lock().await.position),
-                    Self::format_duration(&track.order.meta.duration()),
+                    format_duration(&track.source.lock().await.position),
+                    track.order.meta.format_duration(),
                     track.order.ordered_by.author.name,
                 ));
 
@@ -400,7 +403,7 @@ impl AudioTrackQueue {
                     Self::push_track_link(&mut msg, order);
                     msg.push_mono_line_safe(format_args!(
                         "({}) ordered by {}",
-                        Self::format_duration(&order.meta.duration()),
+                        order.meta.format_duration(),
                         order.ordered_by.author.name,
                     ));
                 }
@@ -413,7 +416,7 @@ impl AudioTrackQueue {
                         .footer(|it| {
                             it.text(format_args!(
                                 "Total time left to play: {}",
-                                Self::format_duration(&total_duration)
+                                format_duration(&total_duration)
                             ))
                         });
                     Self::try_add_random_queue_humnail(it, image)
@@ -478,6 +481,16 @@ impl AudioTrackQueue {
                         it.description("The audio tracks queue is already empty")
                     })
                     .await?;
+                } else {
+                    self.orders.clear();
+                    self.send_embed(source.channel_id, |it| {
+                        it.description(
+                            MessageBuilder::new()
+                                .push("The audio track queue was cleared by ")
+                                .push_mono_safe(source.author.name),
+                        )
+                    })
+                    .await?;
                 }
             }
         }
@@ -494,16 +507,22 @@ impl AudioTrackQueue {
             .sum();
 
         let track = self.active_track.as_ref().unwrap();
-        let active_left = track.order.meta.duration() - track.source.lock().await.position;
+        let current_position = track.source.lock().await.position;
 
+        // This condition is required because livestreams have duration 0
+        // and this way we prevent the duration underflow in the further subtraction expression
+        if track.order.meta.is_livestream() {
+            return queue_duration;
+        }
+
+        let active_left = track.order.meta.duration() - current_position;
         active_left + queue_duration
     }
 
     fn active_track_or_err(&self) -> crate::Result<&ActiveAudioTrack> {
-        match &self.active_track {
-            Some(it) => Ok(it),
-            None => Err(crate::err!(NoActiveTrack)),
-        }
+        self.active_track
+            .as_ref()
+            .ok_or_else(|| crate::err!(NoActiveTrack))
     }
 
     async fn play_next_track(&mut self) {
@@ -520,7 +539,7 @@ impl AudioTrackQueue {
                 .lock()
                 .await
                 .get_mut(&self.guild_id)
-                .unwrap()
+                .expect("BUG: the audio queue should have a handler assigned to its guild")
                 .stop();
         }
 
@@ -529,7 +548,7 @@ impl AudioTrackQueue {
             None => return Ok(()),
         };
 
-        let guild = self.cache.guild(&self.guild_id).await.unwrap();
+        let guild = self.cache.guild_or_err(self.guild_id).await?;
 
         let channel_id = guild
             .voice_states
@@ -589,8 +608,8 @@ impl AudioTrackQueue {
             "ordered by {} ({} / {})",
             // FIXME: use `.nick_in(guild_id)`
             track.order.ordered_by.author.name,
-            Self::format_duration(&track.source.lock().await.position),
-            Self::format_duration(&track.order.meta.duration()),
+            format_duration(&track.source.lock().await.position),
+            track.order.meta.format_duration(),
         );
         self.send_embed(order_msg.channel_id, |it| {
             it.title("Now playing")
@@ -600,20 +619,6 @@ impl AudioTrackQueue {
         })
         .await?;
         Ok(())
-    }
-
-    /// Returns duration in a colon separated string format.
-    fn format_duration(duration: &impl Hhmmss) -> impl fmt::Display {
-        // Unfortunately chrono doesn't have anything useful for formatting durations
-        // FIXME: use chrono means of formatting durations once this is added to the lib:
-        // https://github.com/chronotope/chrono/issues/197#issuecomment-716257398
-        let rendered = duration.hhmmss();
-
-        // Remove unnecessary leading zeros for hours (most of the tracks are within the minutes timespan)
-        match rendered.strip_prefix("00:") {
-            Some(it) => it.to_owned(),
-            None => rendered,
-        }
     }
 }
 
