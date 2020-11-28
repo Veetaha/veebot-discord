@@ -191,7 +191,7 @@ impl AudioTrackQueue {
             let cmd = match &mut self.active_track {
                 None => cmd_recv.next().await,
                 Some(ActiveAudioTrack { finish_recv, .. }) => futures::select! {
-                    it = cmd_recv.next() => it,
+                    it = cmd_recv.select_next_some() => Some(it),
                     it = finish_recv.fuse() => {
                         if let Ok(()) = it {
                             let _ = self.show_track_finished(&self.active_track.as_ref().unwrap().order).await;

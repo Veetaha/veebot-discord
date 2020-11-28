@@ -44,10 +44,12 @@ impl<T: Into<ErrorKind>> From<T> for Error {
             | ErrorKind::UserNotInGuild { .. }
             | ErrorKind::ParseInt { .. }
             | ErrorKind::ParseArg { .. }
+            | ErrorKind::ParseUrl { .. }
             | ErrorKind::CommaInImageTag { .. }
             | ErrorKind::UserNotInVoiceChanel { .. }
             | ErrorKind::NoActiveTrack { .. } => true,
             ErrorKind::JoinVoiceChannel { .. }
+            | ErrorKind::TextureSynthesis { .. }
             | ErrorKind::AudioStart { .. }
             | ErrorKind::UnknownDiscord { .. }
             | ErrorKind::SendRequest { .. }
@@ -95,6 +97,9 @@ impl Error {
 
 #[derive(Error, Debug)]
 pub enum ErrorKind {
+    #[error("{0}")]
+    TextureSynthesis(#[from] texture_synthesis::Error),
+
     #[error(
         "Given track index `{}` is out of bounds, available range: {:?}",
         index,
@@ -111,11 +116,14 @@ pub enum ErrorKind {
     #[error("You are not in a discord server (guild) right now")]
     UserNotInGuild,
 
-    #[error("Failed to parse an integer: {0}")]
+    #[error("Failed to the argument as an integer: {0}")]
     ParseInt(#[from] ArgError<ParseIntError>),
 
     #[error("Parsing the arguments finished with an error: {0}")]
     ParseArg(#[from] ArgError<Box<Error>>),
+
+    #[error("Failed to parse the argument as url: {0}")]
+    ParseUrl(#[from] ArgError<url::ParseError>),
 
     #[error("The specified image tags contain a comma (which is prohibited): {input}")]
     CommaInImageTag { input: String },
@@ -161,20 +169,22 @@ impl ErrorKind {
     /// Short name of the kind of this error.
     fn title(&self) -> &'static str {
         match self {
-            ErrorKind::NoActiveTrack => "Invalid command error",
-            ErrorKind::UserNotInGuild => "Not in a guild error",
-            ErrorKind::ParseArg(_)
-            | ErrorKind::ParseInt(_)
+            ErrorKind::TextureSynthesis { .. } => "Texture synthesis error",
+            ErrorKind::NoActiveTrack { .. } => "Invalid command error",
+            ErrorKind::UserNotInGuild { .. } => "Not in a guild error",
+            ErrorKind::ParseArg { .. }
+            | ErrorKind::ParseInt { .. }
+            | ErrorKind::ParseUrl { .. }
             | ErrorKind::CommaInImageTag { .. }
             | ErrorKind::TrackIndexOutOfBounds { .. } => "Invalid argument error",
             ErrorKind::UserNotInVoiceChanel => "Not in a voice channel error",
-            ErrorKind::JoinVoiceChannel(_) => "Permissions error",
-            ErrorKind::AudioStart(_)
-            | ErrorKind::UnknownDiscord(_)
-            | ErrorKind::DiscordGuildCacheMiss(_) => "Internal error",
-            ErrorKind::SendRequest(_) => "Send request error",
-            ErrorKind::GetRequest { .. } | ErrorKind::UnexpectedJsonShape(_) => "HTTP error",
-            ErrorKind::YtVidNotFound(_) => "YouTube error",
+            ErrorKind::JoinVoiceChannel { .. } => "Permissions error",
+            ErrorKind::AudioStart { .. }
+            | ErrorKind::UnknownDiscord { .. }
+            | ErrorKind::DiscordGuildCacheMiss { .. } => "Internal error",
+            ErrorKind::SendRequest { .. } => "Send request error",
+            ErrorKind::GetRequest { .. } | ErrorKind::UnexpectedJsonShape { .. } => "HTTP error",
+            ErrorKind::YtVidNotFound { .. } => "YouTube error",
             ErrorKind::YtInferVideoId { .. } => "Bad YouTube URL",
         }
     }

@@ -1,6 +1,7 @@
 //! Discord commands root module
 
 pub(crate) mod audio;
+pub(crate) mod image;
 
 use std::collections::HashSet;
 

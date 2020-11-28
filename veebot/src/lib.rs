@@ -60,6 +60,7 @@ pub async fn run(config: Config) -> eyre::Result<()> {
         .group(&commands::GENERAL_GROUP)
         .group(&commands::META_GROUP)
         .group(&commands::audio::AUDIO_GROUP)
+        .group(&commands::image::IMAGE_GROUP)
         .help(&HELP);
 
     let mut client = Client::builder(config.discord_bot_token)
