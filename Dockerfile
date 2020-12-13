@@ -19,7 +19,7 @@ RUN apt-get update
 # - `ffmpeg` - used by `serenity` to further process `youtube-dl` stream
 # - `opus-tools` - required to get some shared library (@Veetaha doesn't recall which one exactly)
 #
-# I also had to install `dh-autoreconf` on my personal laptop, but it already installed
+# I also had to install `dh-autoreconf` on my personal laptop, but it is already installed
 # in this docker setup (I guess?)
 
 RUN apt-get install -y curl opus-tools ffmpeg python
