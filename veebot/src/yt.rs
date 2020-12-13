@@ -1,8 +1,8 @@
 //! Symbols related to communicating with the YouTube API
 
-use std::{fmt, time};
+use std::{fmt, sync::Arc, time};
 use url::Url;
-use util::{regex, ReqwestClientExt};
+use util::{regex, ReqwestBuilderExt};
 
 use crate::util;
 
@@ -160,15 +160,15 @@ impl YtVideo {
 }
 
 pub(crate) struct YtService {
-    http_client: reqwest::Client,
+    http_client: Arc<reqwest::Client>,
     yt_data_api_key: String,
 }
 
 impl YtService {
-    pub(crate) fn new(yt_data_api_key: String) -> Self {
+    pub(crate) fn new(yt_data_api_key: String, http_client: Arc<reqwest::Client>) -> Self {
         Self {
             yt_data_api_key,
-            http_client: util::create_http_client(),
+            http_client,
         }
     }
 
@@ -176,14 +176,13 @@ impl YtService {
     async fn find_video_by_id(&self, id: &str) -> crate::Result<Option<YtVideo>> {
         let res: rpc::videos::Response = self
             .http_client
-            .send_get_json_request(
-                yt_api(&["videos"]),
-                &[
-                    ("part", "snippet,contentDetails,liveStreamingDetails"),
-                    ("id", id),
-                    ("key", &self.yt_data_api_key),
-                ],
-            )
+            .get(yt_api(&["videos"]))
+            .query(&[
+                ("part", "snippet,contentDetails,liveStreamingDetails"),
+                ("id", id),
+                ("key", &self.yt_data_api_key),
+            ])
+            .read_json()
             .await?;
 
         Ok(res.items.into_iter().next().map(YtVideo))
@@ -203,15 +202,14 @@ impl YtService {
         // First perform a search with the given human query string
         let res: rpc::search::Response = self
             .http_client
-            .send_get_json_request(
-                yt_api(&["search"]),
-                &[
-                    ("maxResults", "1"),
-                    ("type", "video"),
-                    ("q", query),
-                    ("key", &self.yt_data_api_key),
-                ],
-            )
+            .get(yt_api(&["search"]))
+            .query(&[
+                ("maxResults", "1"),
+                ("type", "video"),
+                ("q", query),
+                ("key", &self.yt_data_api_key),
+            ])
+            .read_json()
             .await?;
 
         // Take the returned video metadata (if it was found)

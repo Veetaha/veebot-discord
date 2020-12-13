@@ -1,8 +1,8 @@
 //! Symbols related to communicating with the Gelbooru API
 
-use crate::util::{self, ReqwestClientExt, ThemeTag};
+use crate::util::{self, ReqwestBuilderExt, ThemeTag};
 use itertools::Itertools;
-use std::{collections::HashSet, iter};
+use std::{collections::HashSet, iter, sync::Arc};
 use url::Url;
 
 /// Declarations of the gelbooru JSON API types.
@@ -44,15 +44,19 @@ impl rpc::Image {
 }
 
 pub(crate) struct GelbooruService {
-    http_client: reqwest::Client,
+    http_client: Arc<reqwest::Client>,
     gelbooru_api_key: String,
     gelbooru_user_id: String,
 }
 
 impl GelbooruService {
-    pub(crate) fn new(gelbooru_api_key: String, gelbooru_user_id: String) -> Self {
+    pub(crate) fn new(
+        gelbooru_api_key: String,
+        gelbooru_user_id: String,
+        http_client: Arc<reqwest::Client>,
+    ) -> Self {
         Self {
-            http_client: util::create_http_client(),
+            http_client,
             gelbooru_api_key,
             gelbooru_user_id,
         }
@@ -83,14 +87,16 @@ impl GelbooruService {
 
         let res: crate::Result<rpc::search::Response> = self
             .http_client
-            .send_get_json_request(gelbooru_api(iter::empty::<&str>()), &query)
+            .get(gelbooru_api(iter::empty::<&str>()))
+            .query(&query)
+            .read_json()
             .await;
 
         match res {
             Ok(it) => Ok(it.0.into_iter().next()),
             // When no image was found, the response has empty body...
             Err(crate::Error {
-                kind: crate::ErrorKind::UnexpectedJsonShape(_),
+                kind: crate::ErrorKind::UnexpectedHttpResponseJsonShape(_),
                 ..
             }) => Ok(None),
             Err(it) => Err(it),

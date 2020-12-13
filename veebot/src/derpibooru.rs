@@ -1,8 +1,8 @@
 //! Symbols related to communicating with the Derpibooru API
 
-use crate::util::{self, ReqwestClientExt, ThemeTag};
+use crate::util::{self, ReqwestBuilderExt, ThemeTag};
 use itertools::Itertools;
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 use url::Url;
 
 /// Declarations of the derpibooru JSON API types.
@@ -74,7 +74,7 @@ impl rpc::ImageMimeType {
 }
 
 pub(crate) struct DerpibooruService {
-    http_client: reqwest::Client,
+    http_client: Arc<reqwest::Client>,
     derpibooru_api_key: String,
     filter_id: String,
     always_on_tags: HashSet<ThemeTag>,
@@ -85,9 +85,10 @@ impl DerpibooruService {
         derpibooru_api_key: String,
         filter_id: String,
         always_on_tags: HashSet<ThemeTag>,
+        http_client: Arc<reqwest::Client>,
     ) -> Self {
         Self {
-            http_client: util::create_http_client(),
+            http_client,
             derpibooru_api_key,
             filter_id,
             always_on_tags,
@@ -119,7 +120,9 @@ impl DerpibooruService {
 
         let res: rpc::search::Response = self
             .http_client
-            .send_get_json_request(derpibooru_api(&["search", "images"]), &query)
+            .get(derpibooru_api(&["search", "images"]))
+            .query(&query)
+            .read_json()
             .await?;
 
         Ok(res.images.into_iter().next())

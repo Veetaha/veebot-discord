@@ -2,14 +2,14 @@
 
 use std::{fmt, str::FromStr, time};
 
+use bytes::Bytes;
 use hhmmss::Hhmmss;
 use serde::de::DeserializeOwned;
 use serenity::{
     async_trait,
     model::{guild::Guild, id::GuildId},
 };
-use tracing::debug;
-use url::Url;
+use tracing::{debug, warn};
 
 /// Shortcut for defining a lazily-compiled regular expression
 macro_rules! _regex {
@@ -46,45 +46,58 @@ impl CacheExt for serenity::client::Cache {
 }
 
 #[async_trait]
-pub(crate) trait ReqwestClientExt {
-    async fn send_get_json_request<T: DeserializeOwned>(
-        &self,
-        url: Url,
-        query: &[(&str, &str)],
+pub(crate) trait ReqwestBuilderExt {
+    async fn read_json<T: DeserializeOwned>(
+        self,
+        // url: Url,
+        // query: &[(&str, &str)],
     ) -> crate::Result<T>;
+
+    async fn read_bytes(self) -> crate::Result<Bytes>;
 }
 
 #[async_trait]
-impl ReqwestClientExt for reqwest::Client {
-    async fn send_get_json_request<T: DeserializeOwned>(
-        &self,
-        url: Url,
-        query: &[(&str, &str)],
-    ) -> crate::Result<T> {
-        debug!(?url, ?query, "sending http GET request");
+impl ReqwestBuilderExt for reqwest::RequestBuilder {
+    async fn read_json<T: DeserializeOwned>(self) -> crate::Result<T> {
+        let bytes = self.read_bytes().await?;
+
+        serde_json::from_slice(&bytes).map_err(|err| {
+            match std::str::from_utf8(&bytes) {
+                Ok(response_body) => warn!(response_body, "Bad JSON response"),
+                Err(utf8_decode_err) => warn!(
+                    response_body = ?bytes,
+                    ?utf8_decode_err,
+                    "Bad JSON response"
+                ),
+            };
+            crate::err!(UnexpectedHttpResponseJsonShape(err))
+        })
+    }
+
+    async fn read_bytes(self) -> crate::error::Result<Bytes> {
+        debug!(request = ?self, "sending HTTP request");
 
         let res = self
-            .get(url)
-            .query(query)
-            // Important for derpibooru (otherwise it responds with an html capcha page)
+            // XXX: important for derpibooru (otherwise it responds with an html capcha page)
             .header("User-Agent", "Veebot")
             .send()
             .await
-            .map_err(|err| crate::err!(SendRequest(err)))?;
+            .map_err(|err| crate::err!(SendHttpRequest(err)))?;
 
         let status = res.status();
 
         if status.is_client_error() || status.is_server_error() {
             let body = match res.text().await {
                 Ok(it) => it,
-                Err(err) => format!("Could not collect the GET request body: {}", err),
+                Err(err) => format!("Could not collect the error response body text: {}", err),
             };
 
-            return Err(crate::err!(GetRequest { status, body }));
+            return Err(crate::err!(BadHttpResponseStatusCode { status, body }));
         }
-        res.json()
+
+        res.bytes()
             .await
-            .map_err(|err| crate::err!(UnexpectedJsonShape(err)))
+            .map_err(|err| crate::err!(ReadHttpResponse(err)))
     }
 }
 

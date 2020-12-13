@@ -46,15 +46,18 @@ impl<T: Into<ErrorKind>> From<T> for Error {
             | ErrorKind::ParseArg { .. }
             | ErrorKind::ParseUrl { .. }
             | ErrorKind::CommaInImageTag { .. }
+            | ErrorKind::InvalidNumberOfArguments { .. }
             | ErrorKind::UserNotInVoiceChanel { .. }
             | ErrorKind::NoActiveTrack { .. } => true,
             ErrorKind::JoinVoiceChannel { .. }
+            | ErrorKind::TokioJoinError { .. }
             | ErrorKind::TextureSynthesis { .. }
             | ErrorKind::AudioStart { .. }
             | ErrorKind::UnknownDiscord { .. }
-            | ErrorKind::SendRequest { .. }
-            | ErrorKind::GetRequest { .. }
-            | ErrorKind::UnexpectedJsonShape { .. }
+            | ErrorKind::SendHttpRequest { .. }
+            | ErrorKind::ReadHttpResponse { .. }
+            | ErrorKind::BadHttpResponseStatusCode { .. }
+            | ErrorKind::UnexpectedHttpResponseJsonShape { .. }
             | ErrorKind::YtVidNotFound { .. }
             | ErrorKind::YtInferVideoId { .. }
             | ErrorKind::DiscordGuildCacheMiss { .. } => false,
@@ -97,25 +100,6 @@ impl Error {
 
 #[derive(Error, Debug)]
 pub enum ErrorKind {
-    #[error("{0}")]
-    TextureSynthesis(#[from] texture_synthesis::Error),
-
-    #[error(
-        "Given track index `{}` is out of bounds, available range: {:?}",
-        index,
-        available
-    )]
-    TrackIndexOutOfBounds {
-        index: usize,
-        available: Option<std::ops::Range<usize>>,
-    },
-
-    #[error("No track is currently playing")]
-    NoActiveTrack,
-
-    #[error("You are not in a discord server (guild) right now")]
-    UserNotInGuild,
-
     #[error("Failed to the argument as an integer: {0}")]
     ParseInt(#[from] ArgError<ParseIntError>),
 
@@ -127,6 +111,31 @@ pub enum ErrorKind {
 
     #[error("The specified image tags contain a comma (which is prohibited): {input}")]
     CommaInImageTag { input: String },
+
+    #[error("Expected: {expected} arguments, but got {actual}")]
+    InvalidNumberOfArguments { expected: usize, actual: usize },
+
+    #[error("Failed to join an async task: {0}")]
+    TokioJoinError(#[from] tokio::task::JoinError),
+
+    #[error("Texture synthesis has failed: {0}")]
+    TextureSynthesis(#[from] texture_synthesis::Error),
+
+    #[error("No track is currently playing")]
+    NoActiveTrack,
+
+    #[error("You are not in a discord server (guild) right now")]
+    UserNotInGuild,
+
+    #[error(
+        "Given track index `{}` is out of bounds, available range: {:?}",
+        index,
+        available
+    )]
+    TrackIndexOutOfBounds {
+        index: usize,
+        available: Option<std::ops::Range<usize>>,
+    },
 
     #[error(
         "You are not in a voice channel. You need to connect to one first so that \
@@ -147,16 +156,19 @@ pub enum ErrorKind {
     UnknownDiscord(#[from] serenity::Error),
 
     #[error("Failed to send an http request")]
-    SendRequest(reqwest::Error),
+    SendHttpRequest(reqwest::Error),
 
-    #[error("GET request has failed (http status code: {status}):\n{body}")]
-    GetRequest {
+    #[error("Failed to read http response")]
+    ReadHttpResponse(reqwest::Error),
+
+    #[error("HTTP request has failed (http status code: {status}):\n{body}")]
+    BadHttpResponseStatusCode {
         status: reqwest::StatusCode,
         body: String,
     },
 
-    #[error("Received an unexpected response JSON obejct")]
-    UnexpectedJsonShape(reqwest::Error),
+    #[error("Received an unexpected response JSON object")]
+    UnexpectedHttpResponseJsonShape(serde_json::Error),
 
     #[error("Failed to find youtube video for \"{0}\" query.")]
     YtVidNotFound(String),
@@ -169,6 +181,7 @@ impl ErrorKind {
     /// Short name of the kind of this error.
     fn title(&self) -> &'static str {
         match self {
+            ErrorKind::TokioJoinError { .. } => "Async task join error",
             ErrorKind::TextureSynthesis { .. } => "Texture synthesis error",
             ErrorKind::NoActiveTrack { .. } => "Invalid command error",
             ErrorKind::UserNotInGuild { .. } => "Not in a guild error",
@@ -177,13 +190,16 @@ impl ErrorKind {
             | ErrorKind::ParseUrl { .. }
             | ErrorKind::CommaInImageTag { .. }
             | ErrorKind::TrackIndexOutOfBounds { .. } => "Invalid argument error",
+            ErrorKind::InvalidNumberOfArguments { .. } => "Invalid number of arguments error",
             ErrorKind::UserNotInVoiceChanel => "Not in a voice channel error",
             ErrorKind::JoinVoiceChannel { .. } => "Permissions error",
             ErrorKind::AudioStart { .. }
             | ErrorKind::UnknownDiscord { .. }
             | ErrorKind::DiscordGuildCacheMiss { .. } => "Internal error",
-            ErrorKind::SendRequest { .. } => "Send request error",
-            ErrorKind::GetRequest { .. } | ErrorKind::UnexpectedJsonShape { .. } => "HTTP error",
+            ErrorKind::SendHttpRequest { .. } => "HTTP error (sending request)",
+            ErrorKind::ReadHttpResponse { .. } => "HTTP error (reading response)",
+            ErrorKind::BadHttpResponseStatusCode { .. }
+            | ErrorKind::UnexpectedHttpResponseJsonShape { .. } => "HTTP error (status code)",
             ErrorKind::YtVidNotFound { .. } => "YouTube error",
             ErrorKind::YtInferVideoId { .. } => "Bad YouTube URL",
         }

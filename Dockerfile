@@ -13,10 +13,14 @@ COPY --from=build /usr/app/target/release/veebot ./veebot
 
 RUN apt-get update
 
+
 # - `youtube-dl` - used by `serenity` to get audio stream from youtube
 # - `python` - required for `youtube-dl`
 # - `ffmpeg` - used by `serenity` to further process `youtube-dl` stream
 # - `opus-tools` - required to get some shared library (@Veetaha doesn't recall which one exactly)
+#
+# I also had to install `dh-autoreconf` on my personal laptop, but it already installed
+# in this docker setup (I guess?)
 
 RUN apt-get install -y curl opus-tools ffmpeg python
 RUN curl -L https://yt-dl.org/downloads/latest/youtube-dl -o /usr/local/bin/youtube-dl

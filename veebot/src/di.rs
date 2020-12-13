@@ -18,23 +18,28 @@ use serenity::{
 use std::sync::Arc;
 
 macro_rules! def_type_map_keys {
-    ($($key:ident => $val:ty),*$(,)?) => {
+    ($($arg_name:ident, $key:ident => $val:ty),*$(,)?) => {
         $(
             pub(crate) struct $key;
             impl TypeMapKey for $key {
                 type Value = $val;
             }
         )*
+
+        pub(crate) fn configure_di(data: &mut TypeMap, $($arg_name: ($key, $val)),*) {
+            $(data.insert::<$key>($arg_name.1);)*
+        }
     }
 }
 
 // Define all the DI keys and their respective values.
 def_type_map_keys! {
-    ClientVoiceManagerToken => Arc<Mutex<ClientVoiceManager>>,
-    YtServiceToken => Arc<crate::yt::YtService>,
-    AudioServiceToken => Arc<crate::audio_queue::AudioService>,
-    DerpibooruServiceToken => Arc<crate::derpibooru::DerpibooruService>,
-    GelbooruServiceToken => Arc<crate::gelbooru::GelbooruService>,
+    dep0, ClientVoiceManagerToken => Arc<Mutex<ClientVoiceManager>>,
+    dep1, YtServiceToken => Arc<crate::yt::YtService>,
+    dep2, AudioServiceToken => Arc<crate::audio_queue::AudioService>,
+    dep3, DerpibooruServiceToken => Arc<crate::derpibooru::DerpibooruService>,
+    dep4, GelbooruServiceToken => Arc<crate::gelbooru::GelbooruService>,
+    dep5, HttpClientToken => Arc<reqwest::Client>,
 }
 
 /// Utility trait to reduce boilerplate for retrieving and acquiring locks
@@ -75,16 +80,12 @@ impl<T: 'static> DiExt<T> for RwLock<TypeMap> {
         T: Send + Sync,
         K: TypeMapKey<Value = Arc<T>>,
     {
-        self.read()
-            .await
-            .get::<K>()
-            .unwrap_or_else(|| {
-                panic!(
-                    "BUG: dependency value of type {} was not found using the token {}",
-                    std::any::type_name::<K::Value>(),
-                    std::any::type_name::<K>(),
-                )
-            })
-            .clone()
+        Arc::clone(&self.read().await.get::<K>().unwrap_or_else(|| {
+            panic!(
+                "BUG: dependency value of type {} was not found using the token {}",
+                std::any::type_name::<K::Value>(),
+                std::any::type_name::<K>(),
+            )
+        }))
     }
 }

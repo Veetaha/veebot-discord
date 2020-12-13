@@ -17,7 +17,9 @@ features = [
 ]
 
 [dependencies]
-backtrace = "0.3.54"
+backtrace = "0.3.55"
+# Some crate makes us use an older version of `bytes`
+bytes = "0.5"
 chrono = { version = "0.4.19", features = ["serde", "std"] }
 dotenv = "0.15.0"
 envy = "0.4.1"
@@ -38,9 +40,9 @@ texture-synthesis = "0.8.0"
 thiserror = "1.0"
 timeago = "0.2.1"
 tokio = { version = "0.2", features = ["full"] }
-tracing = "0.1.21"
-tracing-futures = "0.2.4"
-tracing-subscriber = "0.2.13"
+tracing = "0.1"
+tracing-futures = "0.2"
+tracing-subscriber = "0.2"
 url = { version = "2.2", features = ["serde"] }
 
 veebot-cmd = { path = "../veebot-cmd" }

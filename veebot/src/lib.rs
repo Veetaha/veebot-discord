@@ -72,6 +72,8 @@ pub async fn run(config: Config) -> eyre::Result<()> {
 
     let bot_user = Arc::new(client.cache_and_http.http.get_current_user().await?);
 
+    let http_client = Arc::new(util::create_http_client());
+
     let derpibooru_service = Arc::new(derpibooru::DerpibooruService::new(
         config.derpibooru_api_key,
         config.derpibooru_filter,
@@ -80,6 +82,7 @@ pub async fn run(config: Config) -> eyre::Result<()> {
             .into_iter()
             .map(|it| it.parse().unwrap())
             .collect(),
+        Arc::clone(&http_client),
     ));
 
     let audio_service = Arc::new(AudioService::new(
@@ -92,14 +95,31 @@ pub async fn run(config: Config) -> eyre::Result<()> {
     // Inject the necessary dependencies
     {
         let mut data = client.data.write().await;
-        data.insert::<di::ClientVoiceManagerToken>(Arc::clone(&client.voice_manager));
-        data.insert::<di::YtServiceToken>(Arc::new(yt::YtService::new(config.yt_data_api_key)));
-        data.insert::<di::DerpibooruServiceToken>(derpibooru_service);
-        data.insert::<di::AudioServiceToken>(audio_service);
-        data.insert::<di::GelbooruServiceToken>(Arc::new(gelbooru::GelbooruService::new(
-            config.gelbooru_api_key,
-            config.gelbooru_user_id,
-        )));
+        di::configure_di(
+            &mut data,
+            (
+                di::ClientVoiceManagerToken,
+                Arc::clone(&client.voice_manager),
+            ),
+            (
+                di::YtServiceToken,
+                Arc::new(yt::YtService::new(
+                    config.yt_data_api_key,
+                    Arc::clone(&http_client),
+                )),
+            ),
+            (di::AudioServiceToken, audio_service),
+            (di::DerpibooruServiceToken, derpibooru_service),
+            (
+                di::GelbooruServiceToken,
+                Arc::new(gelbooru::GelbooruService::new(
+                    config.gelbooru_api_key,
+                    config.gelbooru_user_id,
+                    Arc::clone(&http_client),
+                )),
+            ),
+            (di::HttpClientToken, http_client),
+        );
     }
 
     futures::select! {
