@@ -9,6 +9,7 @@ use url::Url;
 /// Use TypeScript declarations as a reference (though they may go out of date):
 /// https://github.com/octet-stream/dinky/blob/master/lib/Dinky.d.ts
 pub(crate) mod rpc {
+    use chrono::Utc;
     use serde::Deserialize;
 
     pub(crate) mod search {
@@ -26,7 +27,7 @@ pub(crate) mod rpc {
         pub(crate) mime_type: ImageMimeType,
         pub(crate) representations: ImageRepresentations,
         pub(crate) tags: Vec<String>,
-        pub(crate) created_at: chrono::NaiveDateTime,
+        pub(crate) created_at: chrono::DateTime<Utc>,
         /// The image's number of upvotes minus the image's number of downvotes.
         pub(crate) score: u64,
     }

@@ -80,13 +80,10 @@ async fn pony(ctx: &Context, msg: &Message, args: Args) -> crate::Result<()> {
                         .push_italic_line(media.score)
                         .push_bold("Created:")
                         .push(" ")
-                        .push_italic_line_safe(timeago::Formatter::new().convert_chrono(
-                            chrono::DateTime::<chrono::Utc>::from_utc(
-                                media.created_at,
-                                chrono::Utc,
-                            ),
-                            chrono::Utc::now(),
-                        ))
+                        .push_italic_line_safe(
+                            timeago::Formatter::new()
+                                .convert_chrono(media.created_at, chrono::Utc::now()),
+                        )
                         .push_bold_line("Tags:")
                         .push_italic_line_safe(
                             MessageBuilder::new().push_codeblock_safe(media.tags.join(", "), None),
