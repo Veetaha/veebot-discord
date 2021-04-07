@@ -126,7 +126,6 @@ impl DerpibooruService {
             .read_json()
             .await?;
 
-
         Ok(res.images.into_iter().next())
     }
 }
