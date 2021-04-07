@@ -81,10 +81,7 @@ async fn pony(ctx: &Context, msg: &Message, args: Args) -> crate::Result<()> {
                         .push_bold("Created:")
                         .push(" ")
                         .push_italic_line_safe(timeago::Formatter::new().convert_chrono(
-                            chrono::DateTime::<chrono::Utc>::from_utc(
-                                media.created_at,
-                                chrono::Utc,
-                            ),
+                            media.created_at,
                             chrono::Utc::now(),
                         ))
                         .push_bold_line("Tags:")
