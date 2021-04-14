@@ -1,4 +1,3 @@
-mod gif_generation;
 mod texture_synthesis;
 
 pub(crate) use self::texture_synthesis::*;
