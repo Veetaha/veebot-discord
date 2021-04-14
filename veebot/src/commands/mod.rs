@@ -34,7 +34,6 @@ async fn restart(ctx: &Context, msg: &Message) -> crate::Result<()> {
     use std::os::unix::process::CommandExt;
     use std::process::Command;
 
-    //
     msg.channel_id
         .send_message(&ctx, |it| {
             it.embed(|it| {
