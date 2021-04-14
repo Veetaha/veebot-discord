@@ -9,7 +9,6 @@ pub(crate) mod yt;
 
 pub(crate) use crate::error::{err, Error, ErrorKind, Result};
 use audio_queue::AudioService;
-use futures::FutureExt;
 use serde::Deserialize;
 use serenity::{
     async_trait,
@@ -119,16 +118,25 @@ pub async fn run(config: Config) -> eyre::Result<()> {
                 )),
             ),
             (di::HttpClientToken, http_client),
+            (
+                di::ClientShardManagerToken,
+                Arc::clone(&client.shard_manager),
+            ),
         );
     }
 
-    futures::select! {
-        it = client.start().fuse() => it?,
-        it = abort_signal().fuse() => {
-            client.shard_manager.lock().await.shutdown_all().await;
-            it?
-        },
-    };
+    let shard_manager = client.shard_manager.clone();
+
+    tokio::spawn(async move {
+        abort_signal()
+            .await
+            .expect("Could not register ctrl+c handler");
+        shard_manager.lock().await.shutdown_all().await;
+    });
+
+    if let Err(why) = client.start().await {
+        tracing::error!("Client error: {:?}", why);
+    }
 
     Ok(())
 }

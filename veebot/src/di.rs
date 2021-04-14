@@ -12,7 +12,7 @@
 
 use serenity::{
     async_trait,
-    client::bridge::voice::ClientVoiceManager,
+    client::bridge::{gateway::ShardManager, voice::ClientVoiceManager},
     prelude::{Mutex, RwLock, TypeMap, TypeMapKey},
 };
 use std::sync::Arc;
@@ -40,6 +40,7 @@ def_type_map_keys! {
     dep3, DerpibooruServiceToken => Arc<crate::derpibooru::DerpibooruService>,
     dep4, GelbooruServiceToken => Arc<crate::gelbooru::GelbooruService>,
     dep5, HttpClientToken => Arc<reqwest::Client>,
+    dep6, ClientShardManagerToken => Arc<Mutex<ShardManager>>,
 }
 
 /// Utility trait to reduce boilerplate for retrieving and acquiring locks

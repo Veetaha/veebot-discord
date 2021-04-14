@@ -19,7 +19,7 @@ use serenity::{
 use veebot_cmd::veebot_cmd;
 
 #[group]
-#[commands(pink)]
+#[commands(pink, restart)]
 pub(crate) struct Meta;
 
 #[veebot_cmd]
@@ -27,6 +27,31 @@ async fn pink(ctx: &Context, msg: &Message) -> crate::Result<()> {
     msg.channel_id.say(&ctx, "(\\ Ponk").await?;
 
     Ok(())
+}
+
+#[veebot_cmd]
+async fn restart(ctx: &Context, msg: &Message) -> crate::Result<()> {
+    use std::os::unix::process::CommandExt;
+    use std::process::Command;
+
+    msg.channel_id
+        .send_message(&ctx, |it| {
+            it.embed(|it| {
+                it.description(
+                    MessageBuilder::new().push_bold("Wait a minute, darling. I'm changing clothes"),
+                )
+                .image("https://derpicdn.net/img/2020/4/23/2329546/large.jpg");
+                it
+            })
+        })
+        .await?;
+
+    let shard = ctx.data.expect_dep::<di::ClientShardManagerToken>().await;
+    shard.lock().await.shutdown_all().await;
+
+    let error = Command::new(std::env::current_exe().unwrap()).exec();
+
+    panic!("{}", error);
 }
 
 #[group]
